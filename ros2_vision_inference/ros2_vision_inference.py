@@ -1,12 +1,10 @@
-import os
+import onnxruntime as ort
 import numpy as np
 import rclpy
 import cv2
-import torch
 from .utils.ros_util import ROSInterface
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import String, Int32, Bool, Float32
+from visualization_msgs.msg import MarkerArray
 import threading
 from numba import jit
 from .seg_labels import PALETTE
@@ -52,7 +50,6 @@ class BaseInferenceThread(threading.Thread):
         self.build_model(*args, **kwargs)
     
     def build_model(self, onnx_path):
-        import onnxruntime as ort
         self.ort_session = ort.InferenceSession(onnx_path, providers=['CUDAExecutionProvider'])
         input_shape = self.ort_session.get_inputs()[0].shape # [1, 3, h, w]
         self.inference_h = input_shape[2]
@@ -61,16 +58,6 @@ class BaseInferenceThread(threading.Thread):
     def set_inputs(self, image, P=None):
         self.image = image
         self.P = P
-    
-    def collate_fn(self, batch):
-        collated_data = {}
-        for key in batch[0]:
-            if isinstance(batch[0][key], torch.Tensor):
-                collated_data[key] = torch.stack([item[key] for item in batch], dim=0)
-            elif isinstance(batch[0][key], np.ndarray):
-                collated_data[key] = torch.stack([torch.from_numpy(item[key]) for item in batch], dim=0)
-
-        return collated_data
 
     def resize(self, image, P=None):
         self.h0, self.w0 = image.shape[0:2]
@@ -173,15 +160,15 @@ class VisionInferenceNode():
         
         if self.mono3d_flag:
             self.mono3d_weight_path  = self.ros_interface.read_one_parameters("MONO3D_CKPT_FILE",
-                                    "/home/yliuhb/vision_factory/weights/mono3d.pth")
+                                    "/home/yliuhb/vision_factory/weights/mono3d.onnx")
         
         if self.seg_flag:
             self.seg_weight_path = self.ros_interface.read_one_parameters("SEG_CKPT_FILE",
-                                        "/home/yliuhb/vision_factory/weights/seg.pth")
+                                        "/home/yliuhb/vision_factory/weights/seg.onnx")
         
         if self.monodepth_flag:
             self.monodepth_weight_path = self.ros_interface.read_one_parameters("MONODEPTH_CKPT_FILE",
-                                        "/home/yliuhb/vision_factory/weights/monodepth.pth")
+                                        "/home/yliuhb/vision_factory/weights/monodepth.onnx")
         
         self.gpu_index = int(self.ros_interface.read_one_parameters("GPU", 0))
         self.seg_opacity = float(self.ros_interface.read_one_parameters("opacity", 0.9))
