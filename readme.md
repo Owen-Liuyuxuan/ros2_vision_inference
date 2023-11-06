@@ -1,6 +1,6 @@
 # ROS2 Vision Inference
 
-This repo contains a unified inference multi-threading nodes for monocular 3D object detection, depth prediction and semantic segmentation.
+This repo contains a unified multi-threading inferencing nodes for monocular 3D object detection, depth prediction and semantic segmentation.
 
 ![RVIZ Example](docs/ros2_vision_inference.gif)
 
