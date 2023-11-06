@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<launch>
+    <let name="vision_factory" value="/home/yliuhb/vision_collection/src/learning/vision_factory"/>
+    <let name="mono3d_flag" value="true"/>
+    <!-- <let name="mono3d_cfg_file" value="/home/yliuhb/vision_collection/model/det3d/monoflex_cfg.py"/> -->
+    <!-- <let name="mono3d_ckpt_file" value="/home/yliuhb/vision_collection/model/det3d/monoflex_2d_center.pth"/> -->
+    <let name="mono3d_ckpt_file" value="/home/yliuhb/vision_collection/model/det3d/mono3d.onnx"/>
+
+    <let name="seg_flag" value="false"/>
+    <let name="seg_ckpt_file" value="/home/yliuhb/vision_collection/model/segmentation/bisenetv1.onnx"/>
+    
+    <let name="monodepth_flag" value="false"/>
+    <let name="monodepth_cfg_file" value="/home/yliuhb/vision_collection/model/monodepth/res101_monodepth_large_cfg.py"/>
+    <let name="monodepth_ckpt_file" value="/home/yliuhb/vision_collection/model/monodepth/res101_monodepth_large.pth"/>
+    
+    <let name="camera_topic" value="/kitti360/left_camera/image"/>
+    <let name="camera_param" value="/kitti360/left_camera/camera_info"/>
+    <let name="bbox_topic" value="/bboxes"/>
+
+    <node pkg="ros2_vision_inference" exec="vision_inference_node" name="vision_inference" output="screen">
+        <param name="VIS_FAC_PATH" value="$(var vision_factory)"/>
+        <param name="MONO3D_FLAG" value="$(var mono3d_flag)"/>
+        <!-- <param name="MONO3D_CFG_FILE" value="$(var mono3d_cfg_file)"/> -->
+        <param name="MONO3D_CKPT_FILE" value="$(var mono3d_ckpt_file)"/>
+
+        <param name="SEG_FLAG" value="$(var seg_flag)"/>
+        <param name="SEG_CKPT_FILE" value="$(var seg_ckpt_file)"/>
+
+        <param name="MONODEPTH_FLAG" value="$(var monodepth_flag)"/>
+        <param name="MONODEPTH_CFG_FILE" value="$(var monodepth_cfg_file)"/>
+        <param name="MONODEPTH_CKPT_FILE" value="$(var monodepth_ckpt_file)"/>
+
+
+        <remap from="/image_raw" to="$(var camera_topic)"/>
+        <remap from="/camera_info" to="$(var camera_param)"/>
+        <remap from="/bboxes" to="$(var bbox_topic)"/>
+    </node>
+
+</launch>
