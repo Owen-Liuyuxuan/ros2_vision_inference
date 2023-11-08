@@ -50,7 +50,9 @@ class BaseInferenceThread(threading.Thread):
         self.build_model(*args, **kwargs)
     
     def build_model(self, onnx_path):
-        self.ort_session = ort.InferenceSession(onnx_path, providers=['CUDAExecutionProvider'])
+        providers = [("CUDAExecutionProvider", {"cudnn_conv_use_max_workspace": '0'})]
+        sess_options = ort.SessionOptions()
+        self.ort_session = ort.InferenceSession(onnx_path, providers=providers, sess_options=sess_options)
         input_shape = self.ort_session.get_inputs()[0].shape # [1, 3, h, w]
         self.inference_h = input_shape[2]
         self.inference_w = input_shape[3]
