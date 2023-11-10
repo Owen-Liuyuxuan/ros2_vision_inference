@@ -49,8 +49,8 @@ class BaseInferenceThread(threading.Thread):
         super().__init__()
         self.build_model(*args, **kwargs)
     
-    def build_model(self, onnx_path):
-        providers = [("CUDAExecutionProvider", {"cudnn_conv_use_max_workspace": '0'})]
+    def build_model(self, onnx_path, gpu_index=0):
+        providers = [("CUDAExecutionProvider", {"cudnn_conv_use_max_workspace": '0', 'device_id': str(gpu_index)})]
         sess_options = ort.SessionOptions()
         self.ort_session = ort.InferenceSession(onnx_path, providers=providers, sess_options=sess_options)
         input_shape = self.ort_session.get_inputs()[0].shape # [1, 3, h, w]
@@ -163,14 +163,17 @@ class VisionInferenceNode():
         if self.mono3d_flag:
             self.mono3d_weight_path  = self.ros_interface.read_one_parameters("MONO3D_CKPT_FILE",
                                     "/home/yliuhb/vision_factory/weights/mono3d.onnx")
-        
+            self.mono3d_gpu_index    = int(self.ros_interface.read_one_parameters("MONO3D_GPU_INDEX", 0))
+
         if self.seg_flag:
             self.seg_weight_path = self.ros_interface.read_one_parameters("SEG_CKPT_FILE",
                                         "/home/yliuhb/vision_factory/weights/seg.onnx")
+            self.seg_gpu_index   = int(self.ros_interface.read_one_parameters("SEG_GPU_INDEX", 0))
         
         if self.monodepth_flag:
             self.monodepth_weight_path = self.ros_interface.read_one_parameters("MONODEPTH_CKPT_FILE",
                                         "/home/yliuhb/vision_factory/weights/monodepth.onnx")
+            self.monodepth_gpu_index   = int(self.ros_interface.read_one_parameters("MONODEPTH_GPU_INDEX", 0))
         
         self.gpu_index = int(self.ros_interface.read_one_parameters("GPU", 0))
         self.seg_opacity = float(self.ros_interface.read_one_parameters("opacity", 0.9))
@@ -178,11 +181,11 @@ class VisionInferenceNode():
     def _init_model(self):
         self.logger.info("Initializing model...")
         if self.mono3d_flag:
-            self.mono3d_thread = Mono3D(self.mono3d_weight_path)
+            self.mono3d_thread = Mono3D(self.mono3d_weight_path, gpu_index=self.mono3d_gpu_index)
         if self.seg_flag:
-            self.seg_thread    = SegmentationThread(self.seg_weight_path)
+            self.seg_thread    = SegmentationThread(self.seg_weight_path, gpu_index=self.seg_gpu_index)
         if self.monodepth_flag:
-            self.monodepth_thread = MonodepthThread(self.monodepth_weight_path)
+            self.monodepth_thread = MonodepthThread(self.monodepth_weight_path, gpu_index=self.monodepth_gpu_index)
         self.logger.info("Model Done")
     
     def _init_static_memory(self):
