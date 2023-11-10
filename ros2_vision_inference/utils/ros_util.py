@@ -1,26 +1,15 @@
 #!/usr/bin/env python
 from typing import Callable, Optional, Union
-import rclpy
-from rclpy.callback_groups import CallbackGroup
-from rclpy.clock import Clock
-import rclpy.duration
-from rclpy.node import Node
 from typing import Any
 import numpy as np
 from math import sin, cos
 import os
-from rclpy.qos import QoSProfile
-from rclpy.qos_event import SubscriptionEventCallbacks
-from rclpy.qos_overriding_options import QoSOverridingOptions
-from rclpy.subscription import Subscription
-from rclpy.timer import Timer
-from rclpy.publisher import Publisher
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+import rospy
+from sensor_msgs.msg import CameraInfo, Image
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import String, Int32, Bool
-from tf2_ros import TransformBroadcaster
-from scipy.spatial.transform import Rotation as R
+from tf import TransformBroadcaster
+import tf
 from geometry_msgs.msg import TransformStamped
 from cv_bridge import CvBridge
 import cv2
@@ -30,7 +19,7 @@ import nuscenes
 from .constants import KITTI_NAMES, KITTI_COLORS
 from typing import Union, List
 
-class ROSInterface(Node):
+class ROSInterface():
     def __init__(self, node_name):
         self.__pub_registry__ = dict()
         self.__sub_registry__ = dict()
@@ -38,26 +27,23 @@ class ROSInterface(Node):
         self.__pub_registry__['__image_topics__'] = []
         self.__pub_registry__['__camera_info_topics__'] = []
         self.__pub_registry__['__image_camera_info_pairs__'] = dict()
-        super().__init__(node_name)
+        rospy.init_node(node_name)
+        rospy.loginfo("Starting RosNode.")
         self.cv_bridge = CvBridge()
-        self.tf_broadcaster = TransformBroadcaster(self)
+        self.tf_broadcaster = TransformBroadcaster()
     
     def spin(self):
-        rclpy.spin(self)
+        rospy.spin()
     
     def publish(self, topic, msg):
         self.__pub_registry__[topic].publish(msg)
     
-    def __del__(self):
-        self.destroy_node()
-        rclpy.shutdown()
     
     def read_one_parameters(self, param_name, default_value=None):
-        self.declare_parameter(param_name, default_value)
-        return self.get_parameter(param_name).value
+        return rospy.get_param(f"~{param_name}", default_value)
 
     def create_publisher(self, msg_type, topic, *args, **kwargs):
-        self.__pub_registry__[topic] = super().create_publisher(msg_type, topic, *args, **kwargs)
+        self.__pub_registry__[topic] = rospy.Publisher(topic, msg_type, *args, **kwargs)
         if msg_type == Marker or msg_type == MarkerArray:
             self.__pub_registry__['__marker_array_topics__'].append(topic)
         if msg_type == Image:
@@ -76,12 +62,12 @@ class ROSInterface(Node):
                     break
         return self.__pub_registry__[topic]
     
-    def create_timer(self, timer_period_sec: float, callback: Callable, callback_group: CallbackGroup = None, clock: Clock = None) -> Timer:
-        self._timer = super().create_timer(timer_period_sec, callback, callback_group, clock)
+    def create_timer(self, timer_period_sec: float, callback: Callable, callback_group = None, clock = None):
+        self._timer = rospy.Timer(rospy.Duration(timer_period_sec), callback)
         return self._timer
 
-    def create_subscription(self, msg_type, topic: str, callback: Callable, qos_profile: QoSProfile | int, *, callback_group: CallbackGroup | None = None, event_callbacks: SubscriptionEventCallbacks | None = None, qos_overriding_options: QoSOverridingOptions | None = None, raw: bool = False) -> Subscription:
-        sub = super().create_subscription(msg_type, topic, callback, qos_profile, callback_group=callback_group, event_callbacks=event_callbacks, qos_overriding_options=qos_overriding_options, raw=raw)
+    def create_subscription(self, msg_type, topic: str, callback: Callable, *args, **kwargs):
+        sub = rospy.Subscriber(topic, msg_type, callback, *args, **kwargs)
         self.__sub_registry__[topic] = sub
         return sub
     
@@ -97,17 +83,17 @@ class ROSInterface(Node):
         """
         image_msg = self.cv_bridge.cv2_to_imgmsg(image, encoding="passthrough")
         image_msg.header.frame_id = frame_id
-        image_msg.header.stamp = self.get_clock().now().to_msg()
+        image_msg.header.stamp = rospy.Time.now()
         self.__pub_registry__[image_topic].publish(image_msg)
 
         if P is not None:
             camera_info_msg = CameraInfo()
             camera_info_msg.header.frame_id = frame_id
-            camera_info_msg.header.stamp = self.get_clock().now().to_msg()
+            camera_info_msg.header.stamp = rospy.Time.now()
             camera_info_msg.height = image.shape[0]
             camera_info_msg.width = image.shape[1]
-            camera_info_msg.d = [0.0, 0.0, 0.0, 0.0, 0.0]
-            camera_info_msg.k = np.reshape(P[0:3, 0:3], (-1)).tolist()
+            camera_info_msg.D = [0.0, 0.0, 0.0, 0.0, 0.0]
+            camera_info_msg.K = np.reshape(P[0:3, 0:3], (-1)).tolist()
             P_no_translation = np.zeros([3, 4])
             P_no_translation[0:3, 0:3] = P[0:3, 0:3]
             camera_info_msg.p = np.reshape(P_no_translation, (-1)).tolist()
@@ -129,24 +115,24 @@ class ROSInterface(Node):
         """
         image_msg = self.cv_bridge.cv2_to_imgmsg(image, encoding="passthrough")
         image_msg.header.frame_id = frame_id
-        image_msg.header.stamp = self.get_clock().now().to_msg()
+        image_msg.header.stamp = rospy.Time.now()
         self.__pub_registry__[image_topic].publish(image_msg)
 
         camera_info_msg = CameraInfo()
         camera_info_msg.header.frame_id = frame_id
-        camera_info_msg.header.stamp = self.get_clock().now().to_msg()
+        camera_info_msg.header.stamp = rospy.Time.now()
         camera_info_msg.distortion_model = "equidistant"
         camera_info_msg.height = image.shape[0]
         camera_info_msg.width = image.shape[1]
         k1 = fisheye_calib["distortion_parameters"]['k1']
         k2 = fisheye_calib["distortion_parameters"]['k2']
-        camera_info_msg.d = [k1, k2, 0.0, 0.0]
+        camera_info_msg.D = [k1, k2, 0.0, 0.0]
         gamma1 = fisheye_calib["projection_parameters"]['gamma1'] / np.pi
         gamma2 = fisheye_calib["projection_parameters"]['gamma2'] / np.pi
         u0 = fisheye_calib["projection_parameters"]['u0']
         v0 = fisheye_calib["projection_parameters"]['v0']
         K = np.array([[gamma1, 0, u0], [0, gamma2, v0], [0, 0, 1]])
-        camera_info_msg.k = np.reshape(K, (-1)).tolist()
+        camera_info_msg.K = np.reshape(K, (-1)).tolist()
 
         P_no_translation = np.zeros([3, 4])
         P_no_translation[0:3, 0:3] = K[0:3, 0:3]
@@ -331,7 +317,7 @@ class ROSInterface(Node):
 
         """
         marker = Marker()
-        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.header.stamp = rospy.Time.now()
         marker.header.frame_id = frame_id
         if marker_id is not None:
             marker.id = marker_id
@@ -354,7 +340,7 @@ class ROSInterface(Node):
             marker.points = self.line_points_from_3d_bbox_nusc(
                                 obj.center[0], obj.center[1], obj.center[2],
                                 obj.wlh[0]   , obj.wlh[2]   , obj.wlh[1]   , obj.orientation.yaw_pitch_roll[0])
-        marker.lifetime = rclpy.duration.Duration(seconds=duration).to_msg()
+        marker.lifetime = rospy.Duration.from_sec(duration)
         return marker
 
     def publish_transformation(self, T, frame_id, child_frame_id, stamp=None):
@@ -365,24 +351,15 @@ class ROSInterface(Node):
             frame_id (str): base_frame
             child_frame_id (str): child_frame
         """
-        msg = TransformStamped()
-        if stamp is None:
-            stamp = self.get_clock().now().to_msg()
-        msg.header.stamp = stamp
-        msg.header.frame_id = frame_id
-        msg.child_frame_id = child_frame_id
-        msg.transform.translation.x = T[0, 3]
-        msg.transform.translation.y = T[1, 3]
-        msg.transform.translation.z = T[2, 3]
-
-        rotation = R.from_matrix(T[0:3, 0:3])
-        quaternion = rotation.as_quat() # [xyzw]
-        msg.transform.rotation.x = quaternion[0]
-        msg.transform.rotation.y = quaternion[1]
-        msg.transform.rotation.z = quaternion[2]
-        msg.transform.rotation.w = quaternion[3]
-
-        self.tf_broadcaster.sendTransform(msg)
+        homo_R = np.eye(4)
+        homo_R[0:3, 0:3] = T[0:3, 0:3]
+        self.tf_broadcaster.sendTransform(
+            (T[0, 3], T[1, 3], T[2, 3]),
+            tf.transformations.quaternion_from_matrix(homo_R),
+            rospy.Time.now(),
+            child_frame_id,
+            frame_id
+        )
 
     def publish_transformation_quat(self, trans, quat, frame_id, child_frame_id, stamp=None):
         """Publish a transform from frame_id to child_frame_id
@@ -395,7 +372,7 @@ class ROSInterface(Node):
         """
         msg = TransformStamped()
         if stamp is None:
-            stamp = self.get_clock().now().to_msg()
+            stamp = rospy.Time.now()
         msg.header.stamp = stamp
         msg.header.frame_id = frame_id
         msg.child_frame_id = child_frame_id
@@ -429,7 +406,7 @@ class ROSInterface(Node):
             name=n, offset=i*itemsize, datatype=ros_dtype, count=1)
             for i, n in enumerate(field_names)]
 
-        header = std_msgs.Header(frame_id=parent_frame, stamp=self.get_clock().now().to_msg())
+        header = std_msgs.Header(frame_id=parent_frame, stamp=rospy.Time.now())
 
         return sensor_msgs.PointCloud2(
             header=header,
@@ -470,10 +447,10 @@ class ROSInterface(Node):
             array.markers = [clear_marker]
             marker_publisher.publish(array)
 
-    def clear_bboxes(self, marker_publisher:Union[str, Publisher], marker_ids:List[int]):
+    def clear_bboxes(self, marker_publisher:Union[str, rospy.Publisher], marker_ids:List[int]):
         if isinstance(marker_publisher, str):
             marker_publisher = self.__pub_registry__[marker_publisher]
-        assert isinstance(marker_publisher, Publisher)
+        assert isinstance(marker_publisher, rospy.Publisher)
         marker_array = MarkerArray()
         for marker_id in marker_ids:
             marker = Marker()

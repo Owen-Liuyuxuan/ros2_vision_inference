@@ -1,13 +1,14 @@
+#!/usr/bin/env python3
 import onnxruntime as ort
 import numpy as np
-import rclpy
+import rospy
 import cv2
-from .utils.ros_util import ROSInterface
+from utils.ros_util import ROSInterface
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from visualization_msgs.msg import MarkerArray
 import threading
 from numba import jit
-from .seg_labels import PALETTE
+from seg_labels import PALETTE
 import time
 
 MONO3D_NAMES = ['car', 'truck', 'bus', 
@@ -98,8 +99,8 @@ class Mono3D(BaseInferenceThread):
         input_numpy = np.ascontiguousarray(np.transpose(normalize_image(resized_image), (2, 0, 1))[None], dtype=np.float32)
         P_numpy = np.array(resized_P, dtype=np.float32)[None]
         outputs = self.ort_session.run(None, {'image': input_numpy, 'P2': P_numpy})
-        scores = np.array(outputs[0], dtype=np.float) # N
-        bboxes = np.array(outputs[1], dtype=np.float) # N, 12
+        scores = np.array(outputs[0]) # N
+        bboxes = np.array(outputs[1]) # N, 12
         cls_indexes = outputs[2] # N
 
         cls_names = [MONO3D_NAMES[cls_index] for cls_index in cls_indexes]
@@ -141,19 +142,16 @@ class MonodepthThread(BaseInferenceThread):
 class VisionInferenceNode():
     def __init__(self):
         self.ros_interface = ROSInterface("VisionInferenceNode")
-
-        self.logger = self.ros_interface.get_logger()
-        self.clock = self.ros_interface.get_clock()
         self._read_params()
         self._init_model()
         self._init_static_memory()
         self._init_topics()
 
-        self.logger.info("Initialization Done")
+        rospy.loginfo("Initialization Done")
         self.ros_interface.spin()
 
     def _read_params(self):
-        self.logger.info("Reading parameters...")
+        rospy.loginfo("Reading parameters...")
 
         self.mono3d_flag = self.ros_interface.read_one_parameters("MONO3D_FLAG", True)
         self.seg_flag = self.ros_interface.read_one_parameters("SEG_FLAG", True)
@@ -176,41 +174,41 @@ class VisionInferenceNode():
         self.seg_opacity = float(self.ros_interface.read_one_parameters("opacity", 0.9))
 
     def _init_model(self):
-        self.logger.info("Initializing model...")
+        rospy.loginfo("Initializing model...")
         if self.mono3d_flag:
-            self.mono3d_thread = Mono3D(self.mono3d_weight_path)
+            self.mono3d_thread = Mono3D(self.mono3d_weight_path, is_optimized=False, gpuindex=0)
         if self.seg_flag:
-            self.seg_thread    = SegmentationThread(self.seg_weight_path)
+            self.seg_thread    = SegmentationThread(self.seg_weight_path, gpuindex=1)
         if self.monodepth_flag:
-            self.monodepth_thread = MonodepthThread(self.monodepth_weight_path)
-        self.logger.info("Model Done")
+            self.monodepth_thread = MonodepthThread(self.monodepth_weight_path, gpuindex=1)
+        rospy.loginfo("Model Done")
     
     def _init_static_memory(self):
-        self.logger.info("Initializing static memory...")
+        rospy.loginfo("Initializing static memory...")
         self.frame_id = None
         self.P = None
         self.num_objects = 0
     
 
     def _init_topics(self):
-        self.bbox_publish = self.ros_interface.create_publisher(MarkerArray, "mono3d/bbox", 10)
-        self.ros_interface.create_publisher(Image, "seg_image", 10)
-        self.ros_interface.create_publisher(Image, "depth_image", 10)
-        self.ros_interface.create_publisher(PointCloud2, "point_cloud", 10)
+        self.bbox_publish = self.ros_interface.create_publisher(MarkerArray, "mono3d/bbox", queue_size=10)
+        self.ros_interface.create_publisher(Image, "seg_image", queue_size=10)
+        self.ros_interface.create_publisher(Image, "depth_image", queue_size=10)
+        self.ros_interface.create_publisher(PointCloud2, "point_cloud", queue_size=10)
 
-        self.ros_interface.create_subscription(CameraInfo, "/camera_info", self.camera_info_callback, 1)
-        self.ros_interface.create_subscription(Image, "/image_raw", self.camera_callback, 1)
+        self.ros_interface.create_subscription(CameraInfo, "/camera_info", self.camera_info_callback)
+        self.ros_interface.create_subscription(Image, "/image_raw", self.camera_callback)
         self.ros_interface.clear_all_bbox()
 
 
     def camera_info_callback(self, msg:CameraInfo):
         self.P = np.zeros((3, 4))
-        self.P[0:3, 0:3] = np.array(msg.k.reshape((3, 3)))
+        self.P[0:3, 0:3] = np.array(msg.K).reshape((3, 3))
         self.frame_id = msg.header.frame_id
 
     def camera_callback(self, msg:Image):
         if self.P is None:
-            self.logger.info("Waiting for camera info...", throttle_duration_sec=0.5)
+            rospy.loginfo("Waiting for camera info...", throttle_duration_sec=0.5)
             return # wait for camera info
         height = msg.height
         width  = msg.width
@@ -233,7 +231,7 @@ class VisionInferenceNode():
         seg = self.seg_thread.join() if self.seg_flag else None
         depth = self.monodepth_thread.join() if self.monodepth_flag else None
 
-        self.logger.info(f"Total runtime: {time.time() - starting}")
+        rospy.loginfo(f"Total runtime: {time.time() - starting}")
 
         # publish objects
         if self.mono3d_flag:
@@ -265,8 +263,8 @@ class VisionInferenceNode():
             self.ros_interface.publish_point_cloud(point_cloud, "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
 
 def main(args=None):
-    rclpy.init(args=args)
     VisionInferenceNode()
+    
 
 if __name__ == "__main__":
     main()
