@@ -4,7 +4,7 @@ import numpy as np
 import rospy
 import cv2
 from utils.ros_util import ROSInterface
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2, CompressedImage
 from visualization_msgs.msg import MarkerArray
 import threading
 from numba import jit
@@ -35,9 +35,7 @@ def ColorizeSeg(pred_seg, rgb_image, opacity=1.0, palette=PALETTE):
     new_image = new_image.astype(np.uint8)
     return new_image
 
-def normalize_image(image):
-    rgb_mean = np.array([0.485, 0.456, 0.406])
-    rgb_std  = np.array([0.229, 0.224, 0.225])
+def normalize_image(image, rgb_mean = np.array([0.485, 0.456, 0.406]), rgb_std  = np.array([0.229, 0.224, 0.225])):
     image = image.astype(np.float32)
     image = image / 255.0
     image = image - rgb_mean
@@ -184,12 +182,17 @@ class VisionInferenceNode():
             self.seg_thread    = SegmentationThread(self.seg_weight_path, gpu_index=self.seg_gpu_index)
         if self.monodepth_flag:
             self.monodepth_thread = MonodepthThread(self.monodepth_weight_path, gpu_index=self.monodepth_gpu_index)
-        self.logger.info("Model Done")
+        rospy.loginfo("Model Done")
     
     def _init_static_memory(self):
         rospy.loginfo("Initializing static memory...")
-        self.frame_id = None
-        self.P = None
+        self.frame_id = "frame_cam00"
+        self.P = np.zeros([3, 4])
+        self.P[0:3, 0:3] = np.array(
+            [ 592.9087,  0,  521.0287,
+           0,  593.1265,  398.2069,
+           0,         0,    1.0000 ]
+        ).reshape(3, 3)
         self.num_objects = 0
     
 
@@ -200,7 +203,8 @@ class VisionInferenceNode():
         self.ros_interface.create_publisher(PointCloud2, "point_cloud", queue_size=10)
 
         self.ros_interface.create_subscription(CameraInfo, "/camera_info", self.camera_info_callback)
-        self.ros_interface.create_subscription(Image, "/image_raw", self.camera_callback)
+        self.ros_interface.create_subscription(Image, "/image_raw", self.camera_callback, buff_size=2**24, queue_size=1)
+        self.ros_interface.create_subscription(CompressedImage, "/image_compress", self.compressed_camera_callback, buff_size=2**24, queue_size=1)
         self.ros_interface.clear_all_bbox()
 
 
@@ -209,15 +213,7 @@ class VisionInferenceNode():
         self.P[0:3, 0:3] = np.array(msg.K).reshape((3, 3))
         self.frame_id = msg.header.frame_id
 
-    def camera_callback(self, msg:Image):
-        if self.P is None:
-            rospy.loginfo("Waiting for camera info...", throttle_duration_sec=0.5)
-            return # wait for camera info
-        height = msg.height
-        width  = msg.width
-        
-        image = np.frombuffer(msg.data, dtype=np.uint8).reshape((height, width, 3))[:, :, ::-1]
-
+    def processing_image(self, image:np.array):
         starting = time.time()
         if self.mono3d_flag:
             self.mono3d_thread.set_inputs(image, self.P.copy())
@@ -260,10 +256,34 @@ class VisionInferenceNode():
 
         # publish colorized point cloud
         if self.seg_flag and self.monodepth_flag:
-            point_cloud = self.ros_interface.depth_image_to_point_cloud_array(depth, self.P[0:3, 0:3], rgb_image=seg_image)
+            kernel = np.ones((7, 7), np.uint8)
+            mask = np.logical_not(seg == 23)
+            mask = cv2.erode(mask.astype(np.uint8), kernel, iterations=1).astype(np.bool_)
+
+            point_cloud = self.ros_interface.depth_image_to_point_cloud_array(depth, self.P[0:3, 0:3], rgb_image=seg_image, mask=mask)
             mask = (point_cloud[:, 1] > -3.5) * (point_cloud[:, 1] < 5.5) * (point_cloud[:, 2] < 80)
             point_cloud = point_cloud[mask]
             self.ros_interface.publish_point_cloud(point_cloud, "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
+    
+    def compressed_camera_callback(self, msg:CompressedImage):
+        if self.P is None:
+            rospy.loginfo("Waiting for camera info...", throttle_duration_sec=0.5)
+            return # wait for camera info
+
+        cv_bridge = self.ros_interface.cv_bridge
+        image = cv_bridge.compressed_imgmsg_to_cv2(msg)[..., ::-1] #[BGR] -> [RGB]
+        self.processing_image(image)
+
+    def camera_callback(self, msg:Image):
+        if self.P is None:
+            rospy.loginfo("Waiting for camera info...", throttle_duration_sec=0.5)
+            return # wait for camera info
+        height = msg.height
+        width  = msg.width
+        
+        image = np.frombuffer(msg.data, dtype=np.uint8).reshape((height, width, 3))[:, :, ::-1]
+        self.processing_image(image)
+       
 
 def main(args=None):
     VisionInferenceNode()

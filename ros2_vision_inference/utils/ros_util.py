@@ -145,7 +145,7 @@ class ROSInterface():
         self.__pub_registry__[camera_info_topic].publish(camera_info_msg)
 
     @staticmethod
-    def depth_image_to_point_cloud_array(depth_image, K, parent_frame="left_camera", rgb_image=None):
+    def depth_image_to_point_cloud_array(depth_image, K, parent_frame="left_camera", rgb_image=None, mask=None):
         """  convert depth image into color pointclouds [xyzbgr]
         
         """
@@ -163,7 +163,10 @@ class ROSInterface():
         pc_3d = np.matmul(K_inv, expand_image)[..., 0:3, 0] #[H, W, 3]
         if rgb_image is not None:
             pc_3d = np.concatenate([pc_3d, rgb_image/256.0], axis=2).astype(np.float32)
-        point_cloud = pc_3d[depth_image > 0,:]
+        if mask is not None:
+            point_cloud = pc_3d[(mask > 0) * (depth_image > 0),:]
+        else:
+            point_cloud = pc_3d[depth_image > 0,:]
         
         return point_cloud
 
