@@ -1,28 +1,17 @@
 <?xml version="1.0"?>
 <launch>
-<<<<<<< HEAD
-    <let name="mono3d_flag" value="true"/>
-    <let name="mono3d_ckpt_file" value="/home/yliuhb/vision_collection/model/det3d/mono3d_yolox_576_768.onnx"/>
-    <let name="mono3d_gpu_index" value="0"/>
-
-    <let name="seg_flag" value="true"/>
-    <let name="seg_ckpt_file" value="/home/yliuhb/vision_collection/model/segmentation/bisenetv1.onnx"/>
-    <let name="seg_gpu_index" value="0"/>
-    
-    <let name="monodepth_flag" value="true"/>
-    <let name="monodepth_ckpt_file" value="/home/yliuhb/vision_collection/model/monodepth/monodepth_res101_384_1280.onnx"/>
-    <let name="monodepth_gpu_index" value="0"/>
-=======
     <arg name="mono3d_flag" default="true"/>
-    <arg name="mono3d_ckpt_file" value="/home/yliuhb/vision_collection/model/det3d/mono3d_yolox_576_768.onnx"/>
+    <arg name="mono3d_ckpt_file" default="/home/yliuhb/vision_collection/model/det3d/mono3d_yolox_576_768.onnx"/>
+    <arg name="mono3d_gpu_index" default="0"/>
 
     <arg name="seg_flag" default="true"/>
     <arg name="seg_ckpt_file" default="/home/yliuhb/vision_collection/model/segmentation/bisenetv1.onnx"/>
+    <arg name="seg_gpu_index" default="0"/>
     
     <arg name="monodepth_flag" default="true"/>
     <arg name="monodepth_ckpt_file" default="/home/yliuhb/vision_collection/model/monodepth/monodepth_res101_384_1280.onnx"/>
->>>>>>> 3166b3a (fix bugs in command line configuration; add QOS profile example; add support for compressed images)
-    
+    <arg name="monodepth_gpu_index" default="0"/>
+
     <arg name="camera_topic" default="/nuscenes/CAM_FRONT/image"/>
     <arg name="compressed_image_topic" default="/sensing/camera/camera0/image_rect_color/compressed"/>
     <arg name="camera_param" default="/nuscenes/CAM_FRONT/camera_info"/>
