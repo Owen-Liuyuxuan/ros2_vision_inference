@@ -3,12 +3,14 @@ import numpy as np
 import rclpy
 import cv2
 from .utils.ros_util import ROSInterface
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2, CompressedImage
 from visualization_msgs.msg import MarkerArray
 import threading
 from numba import jit
 from .seg_labels import PALETTE
 import time
+
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 MONO3D_NAMES = ['car', 'truck', 'bus', 
                 'trailer', 'construction_vehicle',
@@ -98,8 +100,8 @@ class Mono3D(BaseInferenceThread):
         input_numpy = np.ascontiguousarray(np.transpose(normalize_image(resized_image), (2, 0, 1))[None], dtype=np.float32)
         P_numpy = np.array(resized_P, dtype=np.float32)[None]
         outputs = self.ort_session.run(None, {'image': input_numpy, 'P2': P_numpy})
-        scores = np.array(outputs[0], dtype=np.float) # N
-        bboxes = np.array(outputs[1], dtype=np.float) # N, 12
+        scores = np.array(outputs[0], dtype=np.float64) # N
+        bboxes = np.array(outputs[1], dtype=np.float64) # N, 12
         cls_indexes = outputs[2] # N
 
         cls_names = [MONO3D_NAMES[cls_index] for cls_index in cls_indexes]
@@ -201,8 +203,15 @@ class VisionInferenceNode():
         self.ros_interface.create_publisher(Image, "depth_image", 10)
         self.ros_interface.create_publisher(PointCloud2, "point_cloud", 10)
 
-        self.ros_interface.create_subscription(CameraInfo, "/camera_info", self.camera_info_callback, 1)
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        self.ros_interface.create_subscription(CameraInfo, "/camera_info", self.camera_info_callback, qos_profile=qos_profile)
         self.ros_interface.create_subscription(Image, "/image_raw", self.camera_callback, 1)
+        self.ros_interface.create_subscription(CompressedImage, "/compressed_image", self.compressed_image_callback, qos_profile=qos_profile)
         self.ros_interface.clear_all_bbox()
 
 
@@ -211,15 +220,7 @@ class VisionInferenceNode():
         self.P[0:3, 0:3] = np.array(msg.k.reshape((3, 3)))
         self.frame_id = msg.header.frame_id
 
-    def camera_callback(self, msg:Image):
-        if self.P is None:
-            self.logger.info("Waiting for camera info...", throttle_duration_sec=0.5)
-            return # wait for camera info
-        height = msg.height
-        width  = msg.width
-        
-        image = np.frombuffer(msg.data, dtype=np.uint8).reshape((height, width, 3))[:, :, ::-1]
-
+    def process_image(self, image:np.ndarray):
         starting = time.time()
         if self.mono3d_flag:
             self.mono3d_thread.set_inputs(image, self.P.copy())
@@ -266,6 +267,23 @@ class VisionInferenceNode():
             mask = (point_cloud[:, 1] > -3.5) * (point_cloud[:, 1] < 5.5) * (point_cloud[:, 2] < 80)
             point_cloud = point_cloud[mask]
             self.ros_interface.publish_point_cloud(point_cloud, "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
+
+    def compressed_image_callback(self, msg:CompressedImage):
+        if self.P is None:
+            self.logger.info("Waiting for camera info...", throttle_duration_sec=0.5)
+            return # wait for camera info
+        image = self.ros_interface.cv_bridge.compressed_imgmsg_to_cv2(msg)[..., ::-1]
+        self.process_image(image)
+
+    def camera_callback(self, msg:Image):
+        if self.P is None:
+            self.logger.info("Waiting for camera info...", throttle_duration_sec=0.5)
+            return # wait for camera info
+        height = msg.height
+        width  = msg.width
+        
+        image = np.frombuffer(msg.data, dtype=np.uint8).reshape((height, width, 3))[:, :, ::-1]
+        self.process_image(image)
 
 def main(args=None):
     rclpy.init(args=args)
