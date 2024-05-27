@@ -151,8 +151,8 @@ class Metric3DThread(BaseInferenceThread):
         # Perform inference
         outputs = self.ort_session.run(None, onnx_input)
         point_cloud = outputs[1] # pred_depth = outputs[0] # [1, H, W, 6]
-        point_cloud = point_cloud[0] # [H, W, 6]
-        point_cloud = point_cloud[pad_info[0] : point_cloud.shape[0] - pad_info[1], pad_info[2] : point_cloud.shape[1] - pad_info[3]] #[h, w, 6]
+        # point_cloud = point_cloud[0] # [H, W, 6]
+        # point_cloud = point_cloud[pad_info[0] : point_cloud.shape[0] - pad_info[1], pad_info[2] : point_cloud.shape[1] - pad_info[3]] #[h, w, 6]
         point_cloud = point_cloud.reshape([-1, 6])
         
         self._output = point_cloud
@@ -184,13 +184,25 @@ class Metric3DThread(BaseInferenceThread):
         P_inv = np.linalg.inv(P_expanded) # 4x4
 
         # Create T
-        T = np.eye(4)
+        T = np.array(
+                [  0.0000000, -0.3413408,  0.9399396, 0.4,
+            -1.0000000,  0.0000000,  0.0000000, 0.0,
+            0.0000000, -0.9399396, -0.3413408 , 0.7,
+            0, 0, 0, 1]
+        ).reshape([4, 4])
+        # T = np.eye(4)
+
+        # Create mask
+        H, W = input_size
+        mask = np.zeros([H, W], dtype=np.uint8)
+        mask[pad_info[0] : H - pad_info[1], pad_info[2] : W - pad_info[3]] = 1
 
         onnx_input = {
             'image': np.ascontiguousarray(np.transpose(rgb, (2, 0, 1))[None], dtype=np.float32) , # 1, 3, h, w
             'P': P.astype(np.float32)[None], # 1, 3, 4
             'P_inv': P_inv.astype(np.float32)[None], # 1, 4, 4
-            'T': T.astype(np.float32)[None] # 1, 4, 4
+            'T': T.astype(np.float32)[None], # 1, 4, 4
+            'mask' : mask.astype(np.bool)[None] # 1, h, w
         }
         return onnx_input, pad_info
     
@@ -321,7 +333,7 @@ class VisionInferenceNode():
             self.ros_interface.publish_image(depth, image_topic="depth_image", frame_id=self.frame_id)
         
         if self.monodepth_flag and self.monodepth_use_metric_3d:
-            self.ros_interface.publish_point_cloud(depth, "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
+            self.ros_interface.publish_point_cloud(depth, "point_cloud", frame_id='base_link', field_names='xyzrgb')
             return
 
         # publish colorized point cloud
