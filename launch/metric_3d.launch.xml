@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="mono3d_flag" default="false"/>
+    <arg name="mono3d_ckpt_file" default="/home/ukenryu/models/det3d/hkust_dla34_576_768.onnx"/>
+    <arg name="mono3d_gpu_index" default="0"/>
+
+    <arg name="seg_flag" default="false"/>
+    <arg name="seg_ckpt_file" default="/home/ukenryu/models/segmentation/lseg_cityscape_label.onnx"/>
+    <arg name="seg_gpu_index" default="0"/>
+    
+    <arg name="monodepth_flag" default="true"/>
+    <arg name="monodepth_ckpt_file" default="/home/ukenryu/Desktop/python_playground/visionfactory/demos/metric_3d.onnx"/>
+    <arg name="monodepth_gpu_index" default="0"/>
+    <arg name="monodepth_use_metric_3d" default="true"/>
+
+    <arg name="camera_topic" default="/nuscenes/CAM_FRONT/image"/>
+    <arg name="compressed_image_topic" default="/image_raw/compressed"/>
+    <arg name="camera_param" default="/image_raw/camera_info"/>
+    <arg name="output_bbox_topic" default="/bboxes"/>
+    <arg name="output_seg_pointcloud_topic" default="/point_cloud"/>
+
+    <node pkg="ros2_vision_inference" exec="vision_inference_node" name="vision_inference" output="screen">
+        <param name="MONO3D_FLAG" value="$(var mono3d_flag)"/>
+        <param name="MONO3D_CKPT_FILE" value="$(var mono3d_ckpt_file)"/>
+        <param name="MONO3D_GPU_INDEX" value="$(var mono3d_gpu_index)"/>
+
+        <param name="SEG_FLAG" value="$(var seg_flag)"/>
+        <param name="SEG_CKPT_FILE" value="$(var seg_ckpt_file)"/>
+        <param name="SEG_GPU_INDEX" value="$(var seg_gpu_index)"/>
+
+        <param name="MONODEPTH_FLAG" value="$(var monodepth_flag)"/>
+        <param name="MONODEPTH_CKPT_FILE" value="$(var monodepth_ckpt_file)"/>
+        <param name="MONODEPTH_GPU_INDEX" value="$(var monodepth_gpu_index)"/>
+        <param name="MONODEPTH_USE_METRIC_3D" value="$(var monodepth_use_metric_3d)"/>
+
+        <param name="opacity" value="0.4"/>
+        <remap from="/image_raw" to="$(var camera_topic)"/>
+        <remap from="/compressed_image" to="$(var compressed_image_topic)"/>
+        <remap from="/camera_info" to="$(var camera_param)"/>
+        <remap from="/bboxes" to="$(var output_bbox_topic)"/>
+        <remap from="/point_cloud" to="$(var output_seg_pointcloud_topic)"/>
+    </node>
+
+</launch>

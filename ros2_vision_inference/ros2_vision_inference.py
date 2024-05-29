@@ -140,6 +140,70 @@ class MonodepthThread(BaseInferenceThread):
         self._output = self.deresize(outputs[0][0, 0])
         print(f"monodepth runtime: {time.time() - start_time}")
 
+
+import torch
+from typing import List, Tuple
+class Metric3DThread(BaseInferenceThread):
+    def run(self):
+        start_time = time.time()
+        # Prepare input for model inference
+        onnx_input, pad_info = self.prepare_input(self.image)
+        # Perform inference
+        outputs = self.ort_session.run(None, onnx_input)
+        depth_image = outputs[0][0, 0] # [1, 1, H, W] -> [H, W]
+        point_cloud = outputs[1] # pred_depth = outputs[0] # [1, H, W, 6]
+        mask = outputs[2] # [1, H, W]
+        print(point_cloud.shape, mask.shape)
+        point_cloud = point_cloud[mask] # [H, W, 6]
+        point_cloud = point_cloud.reshape([-1, 6])
+        
+        depth_image = depth_image[pad_info[0] : depth_image.shape[0] - pad_info[1], pad_info[2] : depth_image.shape[1] - pad_info[3]] # [H, W] -> [h, w]
+        self._output = depth_image, point_cloud
+        print(f"monodepth runtime: {time.time() - start_time}")
+
+    def prepare_input(self, rgb_image: np.ndarray)->Tuple[torch.Tensor, List[int]]:
+        input_size = (616, 1064)
+
+        h, w = rgb_image.shape[:2]
+        scale = min(input_size[0] / h, input_size[1] / w)
+        self.scale = scale
+        rgb = cv2.resize(rgb_image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+
+        padding = [123.675, 116.28, 103.53]
+        h, w = rgb.shape[:2]
+        pad_h = input_size[0] - h
+        pad_w = input_size[1] - w
+        pad_h_half = pad_h // 2
+        pad_w_half = pad_w // 2
+        rgb:np.ndarray = cv2.copyMakeBorder(rgb, pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half, cv2.BORDER_CONSTANT, value=padding)
+        pad_info = [pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half]
+
+        P = self.P.copy()
+        P[0:2, :] = P[0:2, :] * scale
+        
+        # Create P_inv
+        P_expanded = np.eye(4)
+        P_expanded[0:3, 0:4] = P
+        P_inv = np.linalg.inv(P_expanded) # 4x4
+
+        # Create T
+        T = np.eye(4)
+
+        # Create mask
+        H, W = input_size
+        mask = np.zeros([H, W], dtype=np.uint8)
+        mask[pad_info[0] : H - pad_info[1], pad_info[2] : W - pad_info[3]] = 1
+
+        onnx_input = {
+            'image': np.ascontiguousarray(np.transpose(rgb, (2, 0, 1))[None], dtype=np.float32) , # 1, 3, h, w
+            'P': P.astype(np.float32)[None], # 1, 3, 4
+            'P_inv': P_inv.astype(np.float32)[None], # 1, 4, 4
+            'T': T.astype(np.float32)[None], # 1, 4, 4
+            'mask' : mask.astype(np.bool)[None] # 1, h, w
+        }
+        return onnx_input, pad_info
+    
+
 class VisionInferenceNode():
     def __init__(self):
         self.ros_interface = ROSInterface("VisionInferenceNode")
@@ -176,6 +240,7 @@ class VisionInferenceNode():
             self.monodepth_weight_path = self.ros_interface.read_one_parameters("MONODEPTH_CKPT_FILE",
                                         "/home/yliuhb/vision_factory/weights/monodepth.onnx")
             self.monodepth_gpu_index   = int(self.ros_interface.read_one_parameters("MONODEPTH_GPU_INDEX", 0))
+            self.monodepth_use_metric_3d = self.ros_interface.read_one_parameters("MONODEPTH_USE_METRIC_3D", False)
         
         self.gpu_index = int(self.ros_interface.read_one_parameters("GPU", 0))
         self.seg_opacity = float(self.ros_interface.read_one_parameters("opacity", 0.9))
@@ -187,7 +252,10 @@ class VisionInferenceNode():
         if self.seg_flag:
             self.seg_thread    = SegmentationThread(self.seg_weight_path, gpu_index=self.seg_gpu_index)
         if self.monodepth_flag:
-            self.monodepth_thread = MonodepthThread(self.monodepth_weight_path, gpu_index=self.monodepth_gpu_index)
+            if self.monodepth_use_metric_3d:
+                self.monodepth_thread = Metric3DThread(self.monodepth_weight_path, gpu_index=self.monodepth_gpu_index)
+            else:
+                self.monodepth_thread = MonodepthThread(self.monodepth_weight_path, gpu_index=self.monodepth_gpu_index)
         self.logger.info("Model Done")
     
     def _init_static_memory(self):
@@ -258,12 +326,19 @@ class VisionInferenceNode():
             self.ros_interface.publish_image(seg_image[:, :, ::-1], image_topic="seg_image", frame_id=self.frame_id)
 
         # publish depth
-        if self.monodepth_flag:
+        if self.monodepth_flag and not self.monodepth_use_metric_3d:
             self.ros_interface.publish_image(depth, image_topic="depth_image", frame_id=self.frame_id)
+        
+        if self.monodepth_flag and self.monodepth_use_metric_3d:
+            self.ros_interface.publish_image(depth[0], image_topic="depth_image", frame_id=self.frame_id)
+            self.ros_interface.publish_point_cloud(depth[1], "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
+            return
 
         # publish colorized point cloud
-        if self.seg_flag and self.monodepth_flag:
-            point_cloud = self.ros_interface.depth_image_to_point_cloud_array(depth, self.P[0:3, 0:3], rgb_image=seg_image)
+        if self.monodepth_flag:
+            point_cloud = self.ros_interface.depth_image_to_point_cloud_array(depth,
+                                                                              self.P[0:3, 0:3],
+                                                                              rgb_image=seg_image if self.seg_flag else image)
             mask = (point_cloud[:, 1] > -3.5) * (point_cloud[:, 1] < 5.5) * (point_cloud[:, 2] < 80)
             point_cloud = point_cloud[mask]
             self.ros_interface.publish_point_cloud(point_cloud, "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
