@@ -150,12 +150,15 @@ class Metric3DThread(BaseInferenceThread):
         onnx_input, pad_info = self.prepare_input(self.image)
         # Perform inference
         outputs = self.ort_session.run(None, onnx_input)
+        depth_image = outputs[0][0, 0] # [1, 1, H, W] -> [H, W]
         point_cloud = outputs[1] # pred_depth = outputs[0] # [1, H, W, 6]
-        # point_cloud = point_cloud[0] # [H, W, 6]
-        # point_cloud = point_cloud[pad_info[0] : point_cloud.shape[0] - pad_info[1], pad_info[2] : point_cloud.shape[1] - pad_info[3]] #[h, w, 6]
+        mask = outputs[2] # [1, H, W]
+        print(point_cloud.shape, mask.shape)
+        point_cloud = point_cloud[mask] # [H, W, 6]
         point_cloud = point_cloud.reshape([-1, 6])
         
-        self._output = point_cloud
+        depth_image = depth_image[pad_info[0] : depth_image.shape[0] - pad_info[1], pad_info[2] : depth_image.shape[1] - pad_info[3]] # [H, W] -> [h, w]
+        self._output = depth_image, point_cloud
         print(f"monodepth runtime: {time.time() - start_time}")
 
     def prepare_input(self, rgb_image: np.ndarray)->Tuple[torch.Tensor, List[int]]:
@@ -184,13 +187,7 @@ class Metric3DThread(BaseInferenceThread):
         P_inv = np.linalg.inv(P_expanded) # 4x4
 
         # Create T
-        T = np.array(
-                [  0.0000000, -0.3413408,  0.9399396, 0.4,
-            -1.0000000,  0.0000000,  0.0000000, 0.0,
-            0.0000000, -0.9399396, -0.3413408 , 0.7,
-            0, 0, 0, 1]
-        ).reshape([4, 4])
-        # T = np.eye(4)
+        T = np.eye(4)
 
         # Create mask
         H, W = input_size
@@ -333,7 +330,8 @@ class VisionInferenceNode():
             self.ros_interface.publish_image(depth, image_topic="depth_image", frame_id=self.frame_id)
         
         if self.monodepth_flag and self.monodepth_use_metric_3d:
-            self.ros_interface.publish_point_cloud(depth, "point_cloud", frame_id='base_link', field_names='xyzrgb')
+            self.ros_interface.publish_image(depth[0], image_topic="depth_image", frame_id=self.frame_id)
+            self.ros_interface.publish_point_cloud(depth[1], "point_cloud", frame_id=self.frame_id, field_names='xyzrgb')
             return
 
         # publish colorized point cloud
