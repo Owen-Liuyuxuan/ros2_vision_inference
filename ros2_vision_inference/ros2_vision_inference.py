@@ -151,10 +151,10 @@ class Metric3DThread(BaseInferenceThread):
         # Perform inference
         outputs = self.ort_session.run(None, onnx_input)
         depth_image = outputs[0][0, 0] # [1, 1, H, W] -> [H, W]
-        point_cloud = outputs[1] # pred_depth = outputs[0] # [1, H, W, 6]
-        mask = outputs[2] # [1, H, W]
+        point_cloud = outputs[1] # [HW, 6]
+        mask = outputs[2] # [HW]
         print(point_cloud.shape, mask.shape)
-        point_cloud = point_cloud[mask] # [H, W, 6]
+        point_cloud = point_cloud[mask] # [HW, 6]
         point_cloud = point_cloud.reshape([-1, 6])
         
         depth_image = depth_image[pad_info[0] : depth_image.shape[0] - pad_info[1], pad_info[2] : depth_image.shape[1] - pad_info[3]] # [H, W] -> [h, w]
@@ -195,11 +195,11 @@ class Metric3DThread(BaseInferenceThread):
         mask[pad_info[0] : H - pad_info[1], pad_info[2] : W - pad_info[3]] = 1
 
         onnx_input = {
-            'image': np.ascontiguousarray(np.transpose(rgb, (2, 0, 1))[None], dtype=np.float32) , # 1, 3, h, w
+            'image': np.ascontiguousarray(np.transpose(rgb, (2, 0, 1))[None], dtype=np.float32) , # 1, 3, H, W
             'P': P.astype(np.float32)[None], # 1, 3, 4
             'P_inv': P_inv.astype(np.float32)[None], # 1, 4, 4
             'T': T.astype(np.float32)[None], # 1, 4, 4
-            'mask' : mask.astype(np.bool)[None] # 1, h, w
+            'mask' : mask.astype(np.bool)[None] # 1, H, W
         }
         return onnx_input, pad_info
     

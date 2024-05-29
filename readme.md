@@ -9,16 +9,21 @@ You could checkout the ROS1 version of each inference package:
 - [Monodepth ROS1](https://github.com/Owen-Liuyuxuan/monodepth_ros)
 - [Mono3D ROS1](https://github.com/Owen-Liuyuxuan/visualDet3D_ros)
 
+**Update 1**: We have make a ROS1 version of this repo. Please use it with `git checkout ros1`.
+
+**Update 2**: We have added support for [Metric3D](https://github.com/YvanYin/Metric3D/tree/main), which is a state-of-the-art model for depth with scale. It can predict depth with reliable scale while generalize very well on various scenarios. We produce a reliable onnx version of the model, that could runs with TensorRT even on Jetson machines. We also extents its output to point clouds, facilitating robotic applications.
+
 In this repo, we fully re-structure the code and messages formats for ROS2 (humble), and integrate multi-thread inferencing for three vision tasks.
 
 - Currently all pretrained models are trained using the [visionfactory](https://github.com/Owen-Liuyuxuan/visionfactory) repo. Thus focusing on out-door autonomous driving scenarios. But it is ok to plugin ONNX models that satisfiy the [interface](#onnx-model-interface). Published models description:
 
-| Model                          | Type             | Link                                                                                                                  | Description                                                                                             |
-| ------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| monodepth_res101_384_1280.onnx | MonoDepth        | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0/monodepth_res101_384_1280.onnx) | FSNet, res101 backbone, model input shape (384x1280) trained on KITTI/KITTI360/nuscenes                 |
-| bisenetv1.onnx                 | Segmentation     | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0/bisenetv1.onnx)                 | BiSeNetV1, model input shape (512x768) trained on remapped KITTI360/ApolloScene/CityScapes/BDD100k/a2d2 |
-| mono3d_yolox_576_768.onnx      | Mono3D Detection | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0/mono3d_yolox_576_768.onnx)      | YoloX-m MonoFlex, model input (576x768) trained on KITTI/nuscenes/ONCE/bdd100k/cityscapes|
-| dla34_deform_576_768.onnx      | Mono3D Detection | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0.1/dla34_deform_576_768.onnx)      | DLA34 Deformable Upsample MonoFlex, model input (576x768) trained on KITTI/nuscenes/ONCE/bdd100k/cityscapes|
+| Model                          | Type             | Link                                                                                                                  | Description                                                                                                 |
+| ------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| monodepth_res101_384_1280.onnx | MonoDepth        | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0/monodepth_res101_384_1280.onnx) | FSNet, res101 backbone, model input shape (384x1280) trained on KITTI/KITTI360/nuscenes                     |
+| metric_3d .onnx                | MonoDepth        | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.1/metric_3d.onnx)                 | Metric3Dv2, ViT backbone, supervised depth contains full pipeline from depth image to point cloud.          |
+| bisenetv1.onnx                 | Segmentation     | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0/bisenetv1.onnx)                 | BiSeNetV1, model input shape (512x768) trained on remapped KITTI360/ApolloScene/CityScapes/BDD100k/a2d2     |
+| mono3d_yolox_576_768.onnx      | Mono3D Detection | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0/mono3d_yolox_576_768.onnx)      | YoloX-m MonoFlex, model input (576x768) trained on KITTI/nuscenes/ONCE/bdd100k/cityscapes                   |
+| dla34_deform_576_768.onnx      | Mono3D Detection | [link](https://github.com/Owen-Liuyuxuan/ros2_vision_inference/releases/download/v1.0.1/dla34_deform_576_768.onnx)    | DLA34 Deformable Upsample MonoFlex, model input (576x768) trained on KITTI/nuscenes/ONCE/bdd100k/cityscapes |
 
 
 ## Getting Started
@@ -73,6 +78,9 @@ MonoDepth ONNX: `def forward(self, normalized_images[1, 3, H, W], P[1, 3, 4]):->
 Segmentation ONNX `def forward(self, normalized_images[1, 3, H, W]):->long[1, H, W]`
 
 Mono3D ONNX: `def forward(self, normalized_images[1, 3, H, W], P[1, 3, 4]):->scores[N], bboxes[N,12], cls_indexes[N]`
+
+Metric3D ONNX: `def forward(self, unnormalized_images[1, 3, 616, 1064], P[1, 3, 4], P_inv[1, 4, 4], T[1, 4, 4], mask[1, 616, 1064]):->float[1, 1, H, W], float[HW, 6], bool[HW, 6]`
+
 
 Classes definitions are from the [visionfactory](https://github.com/Owen-Liuyuxuan/visionfactory) repo.
 
