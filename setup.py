@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'vision_inference_node = ros2_vision_inference.ros2_vision_inference:main',
+            'multi_inference_node = ros2_vision_inference.ros2_multi_inference:main',
         ],
     },
 )

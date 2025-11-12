@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, List, Type, Dict, Any
 import rclpy
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
@@ -15,7 +15,7 @@ from rclpy.qos_overriding_options import QoSOverridingOptions
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
 from rclpy.publisher import Publisher
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2, CompressedImage
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import String, Int32, Bool
@@ -29,6 +29,8 @@ import sensor_msgs.msg as sensor_msgs
 import nuscenes
 from .constants import KITTI_NAMES, KITTI_COLORS
 from typing import Union, List
+import message_filters
+from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 class ROSInterface(Node):
     def __init__(self, node_name):
@@ -38,6 +40,8 @@ class ROSInterface(Node):
         self.__pub_registry__['__image_topics__'] = []
         self.__pub_registry__['__camera_info_topics__'] = []
         self.__pub_registry__['__image_camera_info_pairs__'] = dict()
+        self.__sync_subscribers__ = {}
+        self.__sync_objects__ = {}
         super().__init__(node_name)
         self.cv_bridge = CvBridge()
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -84,6 +88,45 @@ class ROSInterface(Node):
         sub = super().create_subscription(msg_type, topic, callback, qos_profile, callback_group=callback_group, event_callbacks=event_callbacks, qos_overriding_options=qos_overriding_options, raw=raw)
         self.__sub_registry__[topic] = sub
         return sub
+    
+    def create_async_subscribers(self, msg_types: List[Type], topics: List[str], 
+                                callback: Callable, qos_profile: QoSProfile = None, 
+                                slop: float = 0.1, queue_size: int = 10) -> List[Subscription]:
+        """Create multiple subscribers with asynchronous message handling using ApproximateTimeSynchronizer.
+        
+        Args:
+            msg_types: List of message types for each topic
+            topics: List of topic names to subscribe to
+            callback: Callback function that will be called when messages are synchronized
+            qos_profile: QoS profile for the subscriptions
+            slop: Time tolerance (in seconds) for considering messages as synchronized
+            queue_size: Size of the synchronizer queue for each topic
+            
+        Returns:
+            List of created message_filters.Subscriber objects
+        """
+        if len(msg_types) != len(topics):
+            raise ValueError("Length of msg_types and topics must be the same")
+        
+        # Generate a unique identifier for this set of subscribers
+        sync_key = "_".join(topics)
+        
+        # Create message_filters.Subscriber for each topic
+        subscribers = []
+        for i, (msg_type, topic) in enumerate(zip(msg_types, topics)):
+            # Create a message_filters subscriber
+            sub = message_filters.Subscriber(self, msg_type, topic, qos_profile=qos_profile)
+            subscribers.append(sub)
+            
+        # Create an ApproximateTimeSynchronizer
+        sync = ApproximateTimeSynchronizer(subscribers, queue_size=queue_size, slop=slop)
+        sync.registerCallback(callback)
+        
+        # Store references to prevent garbage collection
+        self.__sync_subscribers__[sync_key] = subscribers
+        self.__sync_objects__[sync_key] = sync
+        
+        return subscribers
     
     def publish_image(self, image, P=None, image_topic=None, camera_info_topic=None, frame_id="base"):
         """Publish image and info message to ROS.
