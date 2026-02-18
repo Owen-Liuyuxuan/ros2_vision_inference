@@ -180,7 +180,10 @@ class Metric3DThread(BaseInferenceThread):
 
         P = self.P.copy()
         P[0:2, :] = P[0:2, :] * scale
-        
+        # Apply padding offset: principal point shifts when image is centered in padded canvas
+        P[0, 2] += pad_w_half
+        P[1, 2] += pad_h_half
+
         # Create P_inv
         P_expanded = np.eye(4)
         P_expanded[0:3, 0:4] = P
